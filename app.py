@@ -3,6 +3,12 @@ from openai import OpenAI
 import config
 import requests
 import datetime
+import streamlit as st
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import json
+from datetime import datetime, timedelta
 
 # Set up OpenAI API Key
 client = OpenAI(api_key=config.OPENAI_API_KEY)
@@ -115,6 +121,7 @@ def manage_todo_list(action, task=None):
             return f"Task removed: {task}"
         else:
             return "Task not found."
+        
 # Function to handle general knowledge queries
 def get_general_knowledge_response(user_input):
     prompt = (
@@ -203,6 +210,89 @@ def get_movie_recommendations(genre=None, year_filter=None):
     except requests.exceptions.RequestException as e:
         return f"An error occurred: {e}"
 
+# Email-sending function
+def send_email(recipient_email, subject, message_body):
+    try:
+        sender_email = config.SENDER_EMAIL  # Your email from config
+        app_password = config.EMAIL_PASSWORD  # App password from config
+
+        # Setting up MIME
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = recipient_email
+        msg['Subject'] = subject
+
+        # Attach the body with the msg instance
+        msg.attach(MIMEText(message_body, 'plain'))
+
+        # Create SMTP session
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()  # Enable security
+        server.login(sender_email, app_password)  # Login to your email
+
+        # Convert the message to a string and send
+        text = msg.as_string()
+        server.sendmail(sender_email, recipient_email, text)
+        server.quit()
+
+        return "Email sent successfully!"
+
+    except Exception as e:
+        return f"Failed to send email. Error: {str(e)}"
+
+def schedule_meeting(user_email, meeting_datetime):
+    # Define the URL for the scheduling API
+    url = 'https://api.calendly.com/scheduled_events'
+
+    # Calculate the end time for the meeting (30 minutes duration)
+    start_time = meeting_datetime
+    end_time = start_time + timedelta(minutes=30)
+
+    # Define the payload for the meeting request
+    payload = {
+        "event": {
+            "name": "Meeting with Ashish",
+            "start_time": start_time.isoformat() + "Z",  # Use ISO format
+            "end_time": end_time.isoformat() + "Z",
+            "duration": 30,  # Duration in minutes
+            "invitee": {
+                "email": user_email
+            }
+        }
+    }
+
+    # Set the headers for authentication
+    headers = {
+        "Authorization": f"Bearer {config.CALENDLY_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    # Make the request to schedule the meeting
+    response = requests.post(url, headers=headers, data=json.dumps(payload))
+
+    if response.status_code == 201:
+        return True, response.json()  # Return success and response JSON
+    else:
+        return False, response.text  # Return failure message
+
+# Function to escalate issues to human agents
+def escalate_to_human(user_input, user_email, user_contact, issue_intensity):
+    subject = "Escalation Request from Chatbot"
+    
+    # Create message body with user details
+    message_body = (
+        f"User Inquiry: {user_input}\n"
+        f"User Email: {user_email}\n"
+        f"User Contact No: {user_contact}\n"
+        f"Issue Intensity: {issue_intensity}\n"
+        "Please assist with the above inquiry."
+    )
+    
+    # Send the email using the send_email function
+    send_email("ashishlathkar7@gmail.com", subject, message_body)
+    
+    return "Your request has been escalated to a human agent. You will be contacted shortly."
+
 # Streamlit app UI
 st.title("Customer Service Chatbot")
 st.write("Ask me anything related to scheduling, reminders, weather, news, tasks, recommendations, or general knowledge!")
@@ -287,3 +377,58 @@ elif recommendation_type == "Movies":
     
         recommendations = get_movie_recommendations(genre, year)
         st.text_area("Movie Recommendations:", value=recommendations, height=200)
+
+# Email-sending section
+st.subheader("Send an Email")
+
+recipient_email = st.text_input("Recipient Email")
+subject = st.text_input("Email Subject")
+message_body = st.text_area("Message Body")
+
+if st.button("Send Email"):
+    if recipient_email and subject and message_body:
+        response = send_email(recipient_email, subject, message_body)
+        st.success(response)
+    else:
+        st.error("Please fill out all fields.")
+
+# Streamlit UI
+st.title("Schedule a Meeting with Ashish")
+
+# User input for email and meeting time
+user_email = st.text_input("Your Email:")
+meeting_date = st.date_input("Select Date:")
+meeting_time = st.time_input("Select Time:")
+
+# Combine date and time into a single datetime object
+if meeting_date and meeting_time:
+    meeting_datetime = datetime.combine(meeting_date, meeting_time)
+
+# Button to schedule the meeting
+if st.button("Schedule Meeting"):
+    if user_email and meeting_date and meeting_time:
+        success, result = schedule_meeting(user_email, meeting_datetime)
+        if success:
+            st.success("Meeting scheduled successfully!")
+            st.json(result)  # Display response JSON for confirmation
+        else:
+            st.error(f"Failed to schedule meeting: {result}")
+    else:
+        st.warning("Please fill in all fields.")
+
+# Escalation Section
+st.subheader("Escalate to Human Assistance")
+escalation_input = st.text_area("Describe your issue or request for human assistance:")
+user_email = st.text_input("Your email address for follow-up:")
+user_contact = st.text_input("Your contact number:")
+issue_intensity = st.selectbox("Issue Intensity", ["Low", "Medium", "High"])
+
+if st.button("Escalate Issue"):
+    if escalation_input and user_email and user_contact:
+        escalation_response = escalate_to_human(escalation_input, user_email, user_contact, issue_intensity)
+        st.success(escalation_response)
+        
+        # Display contact option
+        st.markdown("You can also contact us directly at +1 940 493 0104.")
+    else:
+        st.warning("Please provide your issue, email address, and contact number.")
