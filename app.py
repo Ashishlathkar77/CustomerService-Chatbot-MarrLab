@@ -3,7 +3,6 @@ from openai import OpenAI
 import config
 import requests
 import datetime
-from google_calendar import authenticate_google_calendar, create_event
 
 # Set up OpenAI API Key
 client = OpenAI(api_key=config.OPENAI_API_KEY)
@@ -38,17 +37,15 @@ def get_weather(city):
     if not city:
         return "City name cannot be empty."
     
-    # Correctly constructing the weather URL
     weather_url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&units=imperial&APPID={config.WEATHER_API_KEY}"
     
     try:
         response = requests.get(weather_url)
-        response.raise_for_status()  # Raise an error for bad responses
+        response.raise_for_status()
         data = response.json()
 
-        # Check if the API response has the necessary keys
         if 'weather' in data and 'main' in data and 'wind' in data:
-            weather = data['weather'][0]['description'].capitalize()  # More detailed description
+            weather = data['weather'][0]['description'].capitalize()
             temp = round(data['main']['temp'])
             humidity = data['main']['humidity']
             wind_speed = round(data['wind']['speed'])
@@ -84,9 +81,8 @@ def get_news():
                 title = article['title']
                 description = article['description'] if article['description'] else "No description available."
                 url = article['url']
-                published_at = article['publishedAt']  # Get the published date
+                published_at = article['publishedAt']
 
-                # Format the output string
                 summaries.append(f"**{title}**: {description} \n*Published on: {published_at}*  \n[Read more]({url})")
             return "\n\n".join(summaries)
         else:
@@ -119,14 +115,6 @@ def manage_todo_list(action, task=None):
             return f"Task removed: {task}"
         else:
             return "Task not found."
-
-# Function to provide recommendations
-def get_recommendations(category):
-    recommendations = {
-        "restaurants": "Here are some recommended restaurants: Restaurant A, Restaurant B, Restaurant C.",
-    }
-    return recommendations.get(category, "No recommendations available for this category.")
-
 # Function to handle general knowledge queries
 def get_general_knowledge_response(user_input):
     prompt = (
@@ -140,6 +128,80 @@ def get_general_knowledge_response(user_input):
     )
     
     return response.choices[0].message.content.strip()
+
+# Function to get Yelp recommendations for restaurants
+def get_restaurant_recommendations(city):
+    headers = {
+        "Authorization": f"Bearer {config.YELP_API_KEY}"
+    }
+    url = f"https://api.yelp.com/v3/businesses/search?term=restaurants&location={city}&limit=5"
+    
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+        recommendations = []
+        for business in data['businesses']:
+            name = business['name']
+            rating = business['rating']
+            address = ", ".join(business['location']['display_address'])
+            recommendations.append(f"**{name}** - Rating: {rating}/5\nLocation: {address}")
+        
+        return "\n\n".join(recommendations)
+    except requests.exceptions.RequestException as e:
+        return f"An error occurred: {e}"
+
+# Function to get movie recommendations from TMDB
+def get_movie_recommendations(genre=None, year_filter=None):
+    # TMDB base URL for movies
+    base_url = "https://api.themoviedb.org/3/discover/movie"
+    
+    # Genre IDs for TMDB (you can expand this as needed)
+    genre_ids = {
+        "Action": 28,
+        "Comedy": 35,
+        "Drama": 18,
+        "Horror": 27,
+        "Science Fiction": 878,
+        "Romance": 10749,
+        "Thriller": 53
+    }
+    
+    # Prepare the parameters for the API request
+    params = {
+        "api_key": config.TMDB_API_KEY,
+        "language": "en-US",
+        "sort_by": "popularity.desc",
+        "page": 1
+    }
+    
+    # Add genre filter if selected
+    if genre and genre in genre_ids:
+        params["with_genres"] = genre_ids[genre]
+    
+    # Add year filter based on user input
+    if year_filter == "After 2000":
+        params["primary_release_date.gte"] = "2000-01-01"
+    elif year_filter == "Before 2000":
+        params["primary_release_date.lte"] = "1999-12-31"
+    
+    try:
+        response = requests.get(base_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        recommendations = []
+        for movie in data['results'][:5]:  # Limit to 5 movies
+            title = movie['title']
+            overview = movie['overview']
+            release_date = movie.get('release_date', 'Unknown')
+            recommendations.append(f"**{title}** (Released: {release_date}): {overview}")
+        
+        return "\n\n".join(recommendations)
+    
+    except requests.exceptions.RequestException as e:
+        return f"An error occurred: {e}"
 
 # Streamlit app UI
 st.title("Customer Service Chatbot")
@@ -201,25 +263,27 @@ if user_input:
         response = get_general_knowledge_response(user_input)
         st.text_area("Response:", value=response, height=50)
 
-# New section for scheduling events
-st.subheader("Schedule an Event")
-with st.form(key='schedule_event_form'):
-    summary = st.text_input("Event Title:")
-    description = st.text_area("Event Description:")
-    start_date = st.date_input("Start Date:", value=datetime.date.today())
-    start_time = st.time_input("Start Time:")
-    end_date = st.date_input("End Date:", value=start_date)
-    end_time = st.time_input("End Time:")
-    
-    # Submit button inside the form
-    submit_button = st.form_submit_button("Schedule Event")
-    
-    if submit_button:
-        # Combine date and time into a single datetime object
-        start_datetime = datetime.datetime.combine(start_date, start_time)
-        end_datetime = datetime.datetime.combine(end_date, end_time)
+# New section for recommendations (restaurants, movies, etc.)
+st.subheader("Get Recommendations")
+recommendation_type = st.selectbox("Choose a recommendation type:", ["Restaurants", "Movies"])
 
-        # Authenticate and create event
-        service = authenticate_google_calendar()
-        event = create_event(service, summary, description, start_datetime.isoformat(), end_datetime.isoformat())
-        st.success(f"Event created: {event.get('htmlLink')}")
+if recommendation_type == "Restaurants":
+    city = st.text_input("Enter the city for restaurant recommendations:")
+    if st.button("Get Restaurant Recommendations"):
+        if city:
+            recommendations = get_restaurant_recommendations(city)
+            st.text_area("Recommendations:", value=recommendations, height=200)
+        else:
+            st.warning("Please enter a city.")
+
+elif recommendation_type == "Movies":
+    # Movie genre selection
+    movie_genre = st.selectbox("Select a genre:", ["Any", "Action", "Comedy", "Drama", "Horror", "Science Fiction", "Romance", "Thriller"])
+    # Year filter for movie recommendations
+    year_filter = st.selectbox("Select a time period:", ["Any", "After 2000", "Before 2000"])
+    if st.button("Get Movie Recommendations"):
+        genre = movie_genre if movie_genre != "Any" else None
+        year = year_filter if year_filter != "Any" else None
+    
+        recommendations = get_movie_recommendations(genre, year)
+        st.text_area("Movie Recommendations:", value=recommendations, height=200)
