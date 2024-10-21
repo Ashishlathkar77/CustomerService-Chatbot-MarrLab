@@ -37,21 +37,22 @@ def set_reminder(reminder_text):
 def schedule_event(event_details):
     return f"Event scheduled: {event_details}"
 
-# Function to get weather information
 def get_weather(city):
     city = city.strip()
     if not city:
         return "City name cannot be empty."
     
+    # Correctly constructing the weather URL
     weather_url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&units=imperial&APPID={config.WEATHER_API_KEY}"
     
     try:
         response = requests.get(weather_url)
-        response.raise_for_status()
+        response.raise_for_status()  # Raise an error for bad responses
         data = response.json()
 
+        # Check if the API response has the necessary keys
         if 'weather' in data and 'main' in data and 'wind' in data:
-            weather = data['weather'][0]['description'].capitalize()
+            weather = data['weather'][0]['description'].capitalize()  # More detailed description
             temp = round(data['main']['temp'])
             humidity = data['main']['humidity']
             wind_speed = round(data['wind']['speed'])
@@ -71,6 +72,7 @@ def get_weather(city):
         return f"Timeout Error: {errt}"
     except requests.exceptions.RequestException as err:
         return f"An error occurred: {err}"
+
 
 # Function to get news information
 def get_news():
@@ -121,7 +123,14 @@ def manage_todo_list(action, task=None):
             return f"Task removed: {task}"
         else:
             return "Task not found."
-        
+
+# Function to provide recommendations
+def get_recommendations(category):
+    recommendations = {
+        "restaurants": "Here are some recommended restaurants: Restaurant A, Restaurant B, Restaurant C.",
+    }
+    return recommendations.get(category, "No recommendations available for this category.")
+
 # Function to handle general knowledge queries
 def get_general_knowledge_response(user_input):
     prompt = (
@@ -293,6 +302,29 @@ def escalate_to_human(user_input, user_email, user_contact, issue_intensity):
     
     return "Your request has been escalated to a human agent. You will be contacted shortly."
 
+# Calendarific API URL
+CALENDARIFIC_URL = "https://calendarific.com/api/v2/holidays"
+
+# Function to fetch holidays using Calendarific API
+def fetch_holidays(api_key, country, year, month, day):
+    params = {
+        'api_key': api_key,
+        'country': country,
+        'year': year,
+        'month': month,
+        'day': day,
+    }
+    try:
+        response = requests.get(CALENDARIFIC_URL, params=params)
+        data = response.json()
+        if response.status_code == 200:
+            holidays = data.get('response', {}).get('holidays', [])
+            return holidays
+        else:
+            return f"Error fetching holidays: {data.get('error', {}).get('message', 'Unknown error')}"
+    except Exception as e:
+        return f"Error occurred: {str(e)}"
+
 # Streamlit app UI
 st.title("Customer Service Chatbot")
 st.write("Ask me anything related to scheduling, reminders, weather, news, tasks, recommendations, or general knowledge!")
@@ -432,3 +464,55 @@ if st.button("Escalate Issue"):
         st.markdown("You can also contact us directly at +1 940 493 0104.")
     else:
         st.warning("Please provide your issue, email address, and contact number.")
+
+st.title("Event and Holiday Reminder System")
+
+# User inputs
+event_title = st.text_input("Event Title", placeholder="Enter your event title")
+event_description = st.text_area("Event Description", placeholder="Enter event details")
+event_date = st.date_input("Event Date")
+event_time = st.time_input("Event Time")
+country_code = st.text_input("Country Code (e.g., US for United States)", max_chars=2).upper()
+recipient_email = st.text_input("Your Email", placeholder="Enter your email for event confirmation")
+
+# Submit button
+if st.button("Check Holiday and Schedule Event"):
+    if not recipient_email:
+        st.error("Please enter a valid email address.")
+
+    # Parse the date input
+    event_year = event_date.year
+    event_month = event_date.month
+    event_day = event_date.day
+
+    # Fetch holidays for the provided country and date
+    holidays = fetch_holidays(config.CALENDARIFIC_API_KEY, country_code, event_year, event_month, event_day)
+
+    # Display holidays or schedule event
+    if isinstance(holidays, str):
+        st.error(holidays)  # If there's an error with the API call
+    elif holidays:
+        # If holidays are found
+        st.warning(f"Public Holidays on {event_date}:")
+        for holiday in holidays:
+            st.write(f"- {holiday['name']}: {holiday['description']}")
+        st.write("Consider rescheduling your event if it conflicts with a holiday.")
+    else:
+        # No holidays found, allow the user to proceed with scheduling the event
+        st.success("No public holidays on this date. You can proceed with your event.")
+        st.write(f"Event '{event_title}' scheduled on {event_date} at {event_time}.")
+
+        # Prepare the email content
+        subject = f"Event Reminder: {event_title}"
+        message_body = (
+            f"Hello,\n\nYour event '{event_title}' is scheduled on {event_date} at {event_time}.\n\n"
+            f"Event Details:\nDescription: {event_description}\nDate: {event_date}\nTime: {event_time}\n\n"
+            f"Thank you!"
+        )
+
+        # Send confirmation email
+        email_status = send_email(recipient_email, subject, message_body)
+        if "successfully" in email_status:
+            st.success("Confirmation email sent successfully!")
+        else:
+            st.error(f"Failed to send email: {email_status}")
